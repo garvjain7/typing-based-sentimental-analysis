@@ -1,0 +1,101 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>TypingMood</title>
+  <link rel="stylesheet" href="/static/css/style.css" />
+</head>
+<body>
+
+<div class="container">
+
+  <header>
+    <h1>⌨ TypingMood</h1>
+    <p>Type the paragraph below — we'll predict your mood from how you type.</p>
+  </header>
+
+  <!-- Live top bar -->
+  <div class="top-bar">
+    <div class="stat-pill">
+      <span>Time</span>
+      <span id="timer">0s</span>
+    </div>
+    <div class="stat-pill">
+      <span>WPM</span>
+      <span id="live-wpm">0</span>
+    </div>
+    <div class="stat-pill">
+      <span>Accuracy</span>
+      <span id="live-acc">100%</span>
+    </div>
+  </div>
+
+  <!-- Paragraph display -->
+  <div class="card">
+    <div class="card-title">Paragraph</div>
+    <div id="paragraph">{{ paragraph }}</div>
+  </div>
+
+  <!-- Typing area -->
+  <div class="card">
+    <div class="card-title">Your Input</div>
+    <textarea
+      id="typing-input"
+      placeholder="Click 'Start Typing' then begin…"
+      disabled
+      autocomplete="off"
+      autocorrect="off"
+      autocapitalize="off"
+      spellcheck="false"
+    ></textarea>
+
+    <div class="btn-row">
+      <button id="start-btn">Start Typing</button>
+      <button id="finish-btn" disabled>Finish</button>
+      <button id="reset-btn">Reset</button>
+    </div>
+    <div id="error-msg"></div>
+  </div>
+
+  <!-- Live chart -->
+  <div class="card">
+    <div class="card-title">Live Performance</div>
+    <div class="chart-wrap">
+      <canvas id="typing-chart"></canvas>
+    </div>
+  </div>
+
+  <!-- Stats grid (filled after finish) -->
+  <div class="card" id="stats-card">
+    <div class="card-title">Session Details</div>
+    <div id="stats-grid"></div>
+  </div>
+
+  <!-- Result (hidden until prediction) -->
+  <div class="card hidden" id="result-section">
+    <div class="card-title">Mood Prediction</div>
+    <div class="result-main">
+      <div id="mood-label">—</div>
+      <div id="confidence"></div>
+    </div>
+    <div class="suggestions-title">Suggestions</div>
+    <ul id="suggestions"></ul>
+  </div>
+
+</div>
+
+<!-- Chart.js from CDN -->
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+
+<!-- Main entry — ES module -->
+<script type="module">
+  import { init } from "/static/js/typing.js";
+
+  // Pass the server-rendered paragraph into JS
+  const paragraph = document.getElementById("paragraph").textContent.trim();
+  init(paragraph);
+</script>
+
+</body>
+</html>
