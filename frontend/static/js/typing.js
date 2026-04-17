@@ -200,14 +200,20 @@ function updateFinishButton() {
 const ONE_MINUTE_MS = 60000;
 
 function checkAutoFinish() {
-  if (state.finished) return;
+  if (state.finished || state.autoFinished) return;
+
+  const totalPossibleTime = Date.now() - state.startTime - state.correctionOffset;
+
   // Auto-finish on 1 minute
-  if (Date.now() - state.startTime >= ONE_MINUTE_MS) {
-    onFinish();
-    return;
+  if (totalPossibleTime >= ONE_MINUTE_MS) {
+    console.log("[SECURITY] 1-minute auto-finish triggered.");
+    state.autoFinished = true;
+    onFinish(); // This function now clears its own interval immediately
   }
   // Auto-finish when full paragraph is typed
-  if (state.typedText.length >= state.originalText.length) {
+  else if (state.typedText.length >= state.originalText.length && state.originalText.length > 0) {
+    console.log("[SECURITY] Paragraph completion auto-finish triggered.");
+    state.autoFinished = true;
     onFinish();
   }
 }
@@ -296,15 +302,19 @@ function preventPasteAction(e) {
 async function onFinish() {
   if (!state.started || state.finished || state.isSubmitting) return;
   
-  // Non-destructive submission lock
+  // IMMEDIATELY Kill all intervals to prevent any secondary triggers (race conditions)
+  clearInterval(state.timerInterval);
+  clearInterval(state.chartInterval);
+  clearInterval(state.autoFinishInterval);
+
+  console.log("[SECURITY] Finalizing session...");
   state.isSubmitting = true;
   const virtualEndTime = Date.now() - state.correctionOffset;
   
   // Cache state for current submission attempt
-  const currentText = state.typedText;
   const currentOriginal = state.originalText;
 
-  errorMsgEl.textContent = "Analyzing patterns... (You can keep typing)";
+  errorMsgEl.textContent = "Analyzing patterns...";
   errorMsgEl.style.color = "var(--primary)";
 
   const features = computeFeatures({ ...state, endTime: virtualEndTime });
@@ -319,24 +329,24 @@ async function onFinish() {
   try {
     const result = await predictMood(features, metadata);
     
-    if (result.stored === false) {
+    if (!result || result.stored === false) {
       // Rejection (Low Trust) - NON-BLOCKING
-      console.warn("[SECURITY] Attempt rejected. Continuing session...", result.warning);
-      errorMsgEl.textContent = `⚠ ${result.warning || "Not enough data yet. Continue typing!"}`;
+      console.warn("[SECURITY] Attempt rejected. Continuing session...", result?.warning);
+      errorMsgEl.textContent = `⚠ ${result?.warning || "Not enough data yet. Continue typing!"}`;
       errorMsgEl.style.color = "var(--danger)";
       
-      // Trigger Time Freeze
+      // Trigger Time Freeze - Stop the clock but allow user to keep typing
       state.lastPauseStart = Date.now();
       state.isWaitingForResume = true;
+      
+      // IMPORTANT: We DO NOT automatically restart the 1-minute timer here.
+      // This prevents the infinite '403 Forbidden' spam loop.
+      // The user can continue typing and click 'Finish' manually.
     } else {
       // SUCCESS - LOCK UI
       state.finished = true;
       state.endTime = virtualEndTime;
       
-      clearInterval(state.timerInterval);
-      clearInterval(state.chartInterval);
-      clearInterval(state.autoFinishInterval);
-
       inputEl.disabled = true;
       finishBtn.disabled = true;
       

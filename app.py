@@ -121,13 +121,23 @@ def predict_mood(data: FeaturesInput, request: Request):
     trust_score = trust_scorer.calculate_score(ml_features, raw_stats, session_info, data.session_id)
     
     # 7. Data Storage Policy
+    stored = False
+    warning = None
+    
     if trust_score >= 60:
         append_row(ml_features, result["mood"], result["confidence"])
-        result["stored"] = True
+        stored = True
     else:
-        result["stored"] = False
-        result["warning"] = "Low trust score detected. Result provided but not stored for training."
+        warning = "Low trust score detected. Result provided but not stored for training."
         
+    return {
+        "mood": result["mood"],
+        "confidence": result["confidence"],
+        "driving_factors": result.get("driving_factors", []),
+        "stored": stored,
+        "warning": warning
+    }
+
 @app.api_route("/admin", methods=["GET", "POST"])
 async def admin_dashboard(request: Request):
     authorized = False

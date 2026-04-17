@@ -25,10 +25,16 @@ export async function predictMood(features, metadata) {
     } catch {
       errorMsg = await response.text();
     }
+    // Specific check for 403 Session Used
+    if (response.status === 403 && errorMsg.includes("already used")) {
+        throw new Error("Session locked. This result was already submitted.");
+    }
     throw new Error(errorMsg);
   }
 
-  return response.json(); // { mood: string, confidence: float }
+  const data = await response.json();
+  if (!data) throw new Error("Server returned empty response");
+  return data;
 }
 
 export async function fetchParagraph() {
