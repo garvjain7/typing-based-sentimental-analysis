@@ -4,7 +4,7 @@ from pathlib import Path
 
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, FileResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel
@@ -81,6 +81,16 @@ def predict_mood(data: FeaturesInput):
     result = predict(features)
     append_row(features, result["mood"], result["confidence"])
     return result
+
+
+@app.get("/robots.txt", include_in_schema=False)
+def robots():
+    return FileResponse("frontend/static/robots.txt")
+
+
+@app.get("/sitemap.xml", include_in_schema=False)
+def sitemap():
+    return FileResponse("frontend/static/sitemap.xml")
 
 if __name__ == "__main__":
     import uvicorn
