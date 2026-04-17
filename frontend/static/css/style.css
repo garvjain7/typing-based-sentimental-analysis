@@ -254,3 +254,24 @@ button:not(:disabled):active { transform: scale(0.97); }
   #stats-grid { grid-template-columns: repeat(2, 1fr); }
   .btn-row { flex-wrap: wrap; }
 }
+/* Driving Factors (AI Reasoning) */
+.driving-pill {
+  background: var(--surface-light);
+  color: var(--text-muted);
+  border: 1px solid var(--border);
+  padding: 6px 12px;
+  border-radius: 16px;
+  font-size: 0.85rem;
+  font-weight: 500;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+  transition: all 0.2s ease;
+}
+
+.driving-pill:hover {
+  border-color: var(--primary);
+  color: var(--primary);
+  transform: translateY(-1px);
+}

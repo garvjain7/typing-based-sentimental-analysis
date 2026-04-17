@@ -294,13 +294,22 @@ function renderStats(features, display) {
 }
 
 function renderResult(result) {
-  const { mood, confidence } = result;
+  const { mood, confidence, driving_factors } = result;
   const emoji = MOOD_EMOJI[mood] || "🧠";
   const pct = Math.round(confidence * 100);
 
   moodEl.textContent = `${emoji} ${mood}`;
   moodEl.className = `mood-${mood.toLowerCase()}`;
   confidenceEl.textContent = `Model confidence: ${pct}%`;
+
+  const drivingBlock = document.getElementById("driving-factors");
+  if (driving_factors && driving_factors.length > 0) {
+    drivingBlock.innerHTML = driving_factors
+      .map(f => `<span class="driving-pill">⚡ ${f}</span>`)
+      .join("");
+  } else {
+    drivingBlock.innerHTML = "";
+  }
 
   const suggestions = getSuggestions(mood);
   suggestionsEl.innerHTML = suggestions

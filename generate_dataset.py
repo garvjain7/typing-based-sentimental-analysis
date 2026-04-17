@@ -152,7 +152,7 @@ if __name__ == "__main__":
     df = generate_typing_dataset(num_users=120)
     
     # Final CSV export
-    output_file = "typing_behavior_dataset.csv"
+    output_file = "backend/data/typing_behavior_dataset.csv"
     df.to_csv(output_file, index=False)
     print(f"Successfully generated {len(df)} rows and saved to {output_file}.")
     

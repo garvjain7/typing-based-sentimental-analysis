@@ -59,15 +59,16 @@ def train_production_model(X, y):
     
     return model, X.columns.tolist()
 
-def save_model(model, features, filename='model.pkl'):
+def save_model(model, features, class_means, filename='model.pkl'):
     """
-    Saves the model and feature metadata for production use.
+    Saves the model, feature metadata, and class distribution means for interpretability.
     """
     print(f"\nSaving model to {filename}...")
-    # We save both the model and the feature names to ensure inference consistency
+    # We save the model, feature names, and typical feature values per mood
     data_to_save = {
         'model': model,
-        'features': features
+        'features': features,
+        'class_means': class_means
     }
     joblib.dump(data_to_save, filename)
     print("Model saved successfully.")
@@ -82,5 +83,11 @@ if __name__ == "__main__":
     # 2. Train Model
     model, feature_names = train_production_model(X, y)
 
-    # 3. Save Model
-    save_model(model, feature_names, filename=MODEL_OUT)
+    # 3. Calculate Class Means (used for Feature Interpretability/Drivers in predictor.py)
+    print("\nCalculating Class Profiles for ML Interpretability...")
+    df_combined = X.copy()
+    df_combined['mood_label'] = y
+    class_means = df_combined.groupby('mood_label')[feature_names].mean().to_dict(orient='index')
+
+    # 4. Save Model
+    save_model(model, feature_names, class_means, filename=MODEL_OUT)
