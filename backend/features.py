@@ -17,7 +17,7 @@ FEATURE_ORDER = [
 # Hard clip ranges — match the dataset generation script
 FEATURE_RANGES = {
     "wpm":                      (10.0,   130.0),
-    "wpm_variance":             (0.0,    400.0),
+    "wpm_variance":             (0.0,    5000.0),
     "avg_key_hold_time":        (50.0,   400.0),
     "avg_inter_key_delay":      (50.0,   1000.0),
     "backspace_rate":           (0.0,    1.0),
