@@ -1,0 +1,236 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Admin Dashboard | TypingMood</title>
+    <link rel="stylesheet" href="/static/css/style.css">
+    <style>
+        .admin-table-wrap {
+            overflow-x: auto;
+            margin-top: 20px;
+            background: rgba(15, 23, 42, 0.4);
+            border-radius: 12px;
+            border: 1px solid rgba(255, 255, 255, 0.1);
+        }
+
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            color: #e2e8f0;
+            font-size: 0.85rem;
+            white-space: nowrap;
+        }
+
+        th, td {
+            text-align: left;
+            padding: 14px 18px;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+        }
+
+        th {
+            background: rgba(255, 255, 255, 0.05);
+            color: var(--primary);
+            text-transform: uppercase;
+            font-size: 0.7rem;
+            letter-spacing: 0.05em;
+            position: sticky;
+            top: 0;
+        }
+
+        tr:hover {
+            background: rgba(255, 255, 255, 0.02);
+        }
+
+        .mood-tag {
+            padding: 4px 8px;
+            border-radius: 4px;
+            font-weight: 600;
+            font-size: 0.7rem;
+        }
+
+        .mood-happy { background: rgba(110, 231, 183, 0.2); color: #6ee7b7; }
+        .mood-neutral { background: rgba(147, 197, 253, 0.2); color: #93c5fd; }
+        .mood-stressed { background: rgba(251, 113, 133, 0.2); color: #fb7185; }
+
+        .login-card {
+            max-width: 400px;
+            margin: 100px auto;
+            text-align: center;
+        }
+
+        input[type="password"] {
+            width: 100%;
+            padding: 12px;
+            background: rgba(15, 23, 42, 0.6);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            border-radius: 8px;
+            color: white;
+            margin-bottom: 20px;
+            outline: none;
+        }
+
+        .summary-row {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 20px;
+            margin-bottom: 30px;
+        }
+
+        .pagination-bar {
+            display: flex;
+            align-items: center;
+            justify-content: flex-end;
+            gap: 15px;
+            margin-top: 20px;
+            color: #94a3b8;
+            font-size: 0.9rem;
+        }
+
+        .nav-btn {
+            background: rgba(255, 255, 255, 0.05);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            color: white;
+            padding: 6px 14px;
+            border-radius: 6px;
+            text-decoration: none;
+            cursor: pointer;
+            transition: 0.2s;
+        }
+
+        .nav-btn:hover:not(.disabled) {
+            background: rgba(255, 255, 255, 0.1);
+            border-color: var(--primary);
+        }
+
+        .nav-btn.disabled {
+            opacity: 0.3;
+            cursor: not-allowed;
+            pointer-events: none;
+        }
+    </style>
+</head>
+
+<body>
+    <div class="container" style="max-width: 1400px;">
+        <header>
+            <h1>🔒 Admin Dashboard</h1>
+            <p>Full behavioral biometrics dataset (Live Sessions Only).</p>
+        </header>
+
+        {% if not authorized %}
+        <div class="card login-card">
+            <div class="card-title">Security Check</div>
+            <p style="margin-bottom: 20px; color: #94a3b8;">Enter admin password to view all 14 columns.</p>
+            <form method="POST">
+                <input type="password" name="password" placeholder="Admin Password" required autofocus>
+                <button type="submit" style="width: 100%;">Authorize</button>
+            </form>
+            {% if error %}
+            <p style="color: var(--danger); margin-top: 15px;">{{ error }}</p>
+            {% endif %}
+        </div>
+        {% else %}
+        
+        <div class="summary-row">
+            <div class="card">
+                <div class="card-title">Total Records</div>
+                <div style="font-size: 2rem; font-weight: bold; color: var(--primary);">{{ total_count }}</div>
+                <p style="color: #94a3b8; font-size: 0.8rem;">Live typing sessions filtered</p>
+            </div>
+            <div class="card">
+                <div class="card-title">Page</div>
+                <div style="font-size: 2rem; font-weight: bold; color: #93c5fd;">{{ page }} <span style="font-size: 1rem; color: #64748b;">/ {{ total_pages }}</span></div>
+                <p style="color: #94a3b8; font-size: 0.8rem;">50 rows per page</p>
+            </div>
+        </div>
+
+        <div class="card">
+            <div class="card-title" style="display: flex; justify-content: space-between; align-items: center;">
+                <span>Biometric Session Logs</span>
+                <a href="/admin" style="font-size: 0.75rem; color: #64748b; text-decoration: none;">⟳ Refresh</a>
+            </div>
+            
+            <div class="admin-table-wrap">
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Timestamp</th>
+                            <th>ID</th>
+                            <th>WPM</th>
+                            <th>Var</th>
+                            <th>Hold(ms)</th>
+                            <th>Delay(ms)</th>
+                            <th>BS Rate</th>
+                            <th>Err Rate</th>
+                            <th>Pause(ms)</th>
+                            <th>P-Var</th>
+                            <th>Cons %</th>
+                            <th>Burst</th>
+                            <th>Mood</th>
+                            <th>Conf</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for row in data %}
+                        <tr>
+                            <td style="color: #64748b;">{{ row.timestamp[:19].replace('T', ' ') }}</td>
+                            <td><small>{{ row.user_id }}</small></td>
+                            <td style="color: #6ee7b7; font-weight: bold;">{{ row.wpm }}</td>
+                            <td>{{ row.wpm_variance|float|round(1) }}</td>
+                            <td>{{ row.avg_key_hold_time }}</td>
+                            <td>{{ row.avg_inter_key_delay }}</td>
+                            <td>{{ row.backspace_rate }}</td>
+                            <td>{{ row.error_rate }}</td>
+                            <td>{{ row.avg_pause_time }}</td>
+                            <td>{{ row.pause_variability }}</td>
+                            <td>{{ (row.typing_consistency_score|float * 100)|round|int }}%</td>
+                            <td>{{ row.burstiness_score }}</td>
+                            <td>
+                                <span class="mood-tag mood-{{ row.mood_label|lower }}">
+                                    {{ row.mood_label }}
+                                </span>
+                            </td>
+                            <td>{{ (row.confidence|float * 100)|round|int }}%</td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+
+            <div class="pagination-bar">
+                <span>{{ start_idx }}-{{ end_idx }} of {{ total_count }}</span>
+                <div style="display: flex; gap: 8px;">
+                    <a href="/admin?page={{ page - 1 }}&password={{ admin_password }}" 
+                       class="nav-btn {% if page <= 1 %}disabled{% endif %}">
+                        &larr;
+                    </a>
+                    <a href="/admin?page={{ page + 1 }}&password={{ admin_password }}" 
+                       class="nav-btn {% if page >= total_pages %}disabled{% endif %}">
+                        &rarr;
+                    </a>
+                </div>
+            </div>
+            
+            <div style="margin-top: 30px; text-align: left;">
+                <a href="/" style="color: var(--primary); text-decoration: none; font-size: 0.8rem;">← Exit to Typing App</a>
+            </div>
+        </div>
+        {% endif %}
+    </div>
+    <script>
+        // "Clean-URL" Magic: 
+        // We delete the password from the address bar as soon as the page loads.
+        // This ensures a Refresh (F5) will lose the password and prompt for login.
+        if (window.history.replaceState) {
+            const url = new URL(window.location);
+            if (url.searchParams.has('password')) {
+                url.searchParams.delete('password');
+                window.history.replaceState({}, '', url.pathname + url.search);
+            }
+        }
+    </script>
+</body>
+
+</html>

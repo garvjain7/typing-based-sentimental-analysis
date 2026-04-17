@@ -1,7 +1,7 @@
 // typing.js — game state, keydown/keyup events, timer, live WPM + accuracy
 
 import { computeFeatures, computeDisplayStats } from "./metrics.js";
-import { predictMood } from "./api.js";
+import { predictMood, startSession, fetchParagraph } from "./api.js";
 import { getSuggestions, MOOD_EMOJI, formatTime } from "./utils.js";
 
 // ── State ────────────────────────────────────────────────────────────────────
@@ -25,6 +25,11 @@ const state = {
   started: false,
   finished: false,
   accumulatedErrors: 0,
+  sessionId: null,
+  isSubmitting: false,
+  correctionOffset: 0,
+  lastPauseStart: null,
+  isWaitingForResume: false,
 };
 
 // ── DOM refs ─────────────────────────────────────────────────────────────────
@@ -155,10 +160,39 @@ function startTimer() {
     if (!state.startTime) return;
     const elapsed = Date.now() - state.startTime;
     const remaining = Math.max(0, ONE_MINUTE_MS - elapsed);
+    
     timerEl.textContent = formatTime(remaining) + " left";
+    
+    updateFinishButton();
+
     // Turn red in last 10 seconds
     timerEl.style.color = remaining <= 10000 ? "var(--danger)" : "";
   }, 500);
+}
+
+function updateFinishButton() {
+  if (state.finished || !state.started) return;
+  
+  const now = Date.now();
+  const elapsed = now - state.startTime;
+  const MIN_REQ_MS = 45000;
+  
+  const isTimeMet = elapsed >= MIN_REQ_MS;
+  const isContentDone = state.typedText.length >= state.originalText.length;
+
+  if (isTimeMet || isContentDone) {
+    if (finishBtn.disabled) {
+      finishBtn.disabled = false;
+      errorMsgEl.textContent = "Stable data collected. You can finish whenever you're ready.";
+      errorMsgEl.style.color = "#6ee7b7";
+      console.log(`[SECURITY] Finish button enabled. (TimeMet: ${isTimeMet}, ContentDone: ${isContentDone})`);
+    }
+  } else {
+    if (!finishBtn.disabled) finishBtn.disabled = true;
+    const wait = Math.ceil((MIN_REQ_MS - elapsed) / 1000);
+    errorMsgEl.textContent = `Gathering behavioral data... ${wait}s remaining.`;
+    errorMsgEl.style.color = "#94a3b8";
+  }
 }
 
 // ── Keyboard events ──────────────────────────────────────────────────────────
@@ -181,7 +215,17 @@ function checkAutoFinish() {
 function onKeyDown(e) {
   if (state.finished) return;
 
-  const now = Date.now();
+  const realNow = Date.now();
+  
+  // Virtual Clock Correction
+  if (state.isWaitingForResume) {
+    const gap = realNow - state.lastPauseStart;
+    state.correctionOffset += gap;
+    state.isWaitingForResume = false;
+    console.log(`[SECURITY] Virtual Clock Resumed. Corrected for ${gap}ms gap.`);
+  }
+
+  const now = realNow - state.correctionOffset;
 
   // Start on first keystroke
   if (!state.started) {
@@ -190,7 +234,8 @@ function onKeyDown(e) {
     startTimer();
     state.chartInterval = setInterval(updateChart, 1000);
     state.autoFinishInterval = setInterval(checkAutoFinish, 500);
-    finishBtn.disabled = false;
+    startBtn.disabled = true; // Lockdown start button once typing begins
+    // Note: finishBtn remains disabled by updateFinishButton until thresholds met
   }
 
   state.totalKeys++;
@@ -202,7 +247,7 @@ function onKeyDown(e) {
 
 function onKeyUp(e) {
   if (!state.started || state.finished) return;
-  const now = Date.now();
+  const now = Date.now() - state.correctionOffset;
   const downTime = state.keyDownMap[e.code];
   if (downTime) {
     const hold = now - downTime;
@@ -211,8 +256,9 @@ function onKeyUp(e) {
   }
 }
 
-function onInput() {
+function onInput(e) {
   if (state.finished) return;
+  
   const newText = inputEl.value;
   const oldText = state.typedText;
 
@@ -230,39 +276,101 @@ function onInput() {
   // Track word completions (space after a word)
   const words = state.typedText.split(" ");
   if (words.length > state.wordTimestamps.length) {
-    state.wordTimestamps.push(Date.now());
+    state.wordTimestamps.push(Date.now() - state.correctionOffset);
   }
 
+  updateFinishButton();
   renderParagraph();
+}
+
+function preventPasteAction(e) {
+  e.preventDefault();
+  const type = e.type;
+  console.warn(`[SECURITY] Blocked unexpected data intervention: ${type} attempt.`);
+  errorMsgEl.textContent = "⚠ Manual typing required. Copy-paste and drag-drop are disabled.";
+  errorMsgEl.style.color = "var(--danger)";
 }
 
 // ── Finish ───────────────────────────────────────────────────────────────────
 
 async function onFinish() {
-  if (!state.started || state.finished) return;
-  state.finished = true;
-  state.endTime = Date.now();
-  clearInterval(state.timerInterval);
-  clearInterval(state.chartInterval);
-  clearInterval(state.autoFinishInterval);
+  if (!state.started || state.finished || state.isSubmitting) return;
+  
+  // Non-destructive submission lock
+  state.isSubmitting = true;
+  const virtualEndTime = Date.now() - state.correctionOffset;
+  
+  // Cache state for current submission attempt
+  const currentText = state.typedText;
+  const currentOriginal = state.originalText;
 
-  inputEl.disabled = true;
-  finishBtn.disabled = true;
-  errorMsgEl.textContent = "";
+  errorMsgEl.textContent = "Analyzing patterns... (You can keep typing)";
+  errorMsgEl.style.color = "var(--primary)";
 
-  const features = computeFeatures(state);
-  const display = computeDisplayStats(state);
+  const features = computeFeatures({ ...state, endTime: virtualEndTime });
+  const display = computeDisplayStats({ ...state, endTime: virtualEndTime });
 
-  // Render stats grid
-  renderStats(features, display);
+  const metadata = {
+    session_id: state.sessionId,
+    total_keys: state.totalKeys,
+    text_length: currentOriginal.length
+  };
 
-  // Call backend
   try {
-    const result = await predictMood(features);
-    renderResult(result);
+    const result = await predictMood(features, metadata);
+    
+    if (result.stored === false) {
+      // Rejection (Low Trust) - NON-BLOCKING
+      console.warn("[SECURITY] Attempt rejected. Continuing session...", result.warning);
+      errorMsgEl.textContent = `⚠ ${result.warning || "Not enough data yet. Continue typing!"}`;
+      errorMsgEl.style.color = "var(--danger)";
+      
+      // Trigger Time Freeze
+      state.lastPauseStart = Date.now();
+      state.isWaitingForResume = true;
+    } else {
+      // SUCCESS - LOCK UI
+      state.finished = true;
+      state.endTime = virtualEndTime;
+      
+      clearInterval(state.timerInterval);
+      clearInterval(state.chartInterval);
+      clearInterval(state.autoFinishInterval);
+
+      inputEl.disabled = true;
+      finishBtn.disabled = true;
+      
+      console.log("[SECURITY] Session closed successfully.");
+      renderStats(features, display);
+      renderResult(result);
+      errorMsgEl.textContent = "Analysis complete. Data stored safely.";
+      errorMsgEl.style.color = "var(--success)";
+    }
   } catch (err) {
-    errorMsgEl.textContent = "Prediction failed. Is the server running?";
-    console.error(err);
+    // 403, 429, 422 errors caught here
+    console.error("[SECURITY] Submission failed.", err.message);
+    
+    if (err.message.includes("403") || err.message.toLowerCase().includes("session")) {
+      errorMsgEl.textContent = "⚠ Session lost / Server restarted. Please click RESET.";
+      // Visual cue: Pulsate reset button
+      resetBtn.style.transform = "scale(1.1)";
+      resetBtn.style.boxShadow = "0 0 15px var(--primary)";
+      setTimeout(() => {
+        resetBtn.style.transform = "";
+        resetBtn.style.boxShadow = "";
+      }, 1000);
+    } else {
+      errorMsgEl.textContent = `⚠ ${err.message}. Continue typing and click finish again.`;
+    }
+    
+    errorMsgEl.style.color = "var(--danger)";
+    
+    // Trigger Time Freeze
+    state.lastPauseStart = Date.now();
+    state.isWaitingForResume = true;
+  } finally {
+    state.isSubmitting = false;
+    resetBtn.disabled = false; // Recovery path: Always allow reset
   }
 }
 
@@ -327,6 +435,12 @@ async function onReset() {
   clearInterval(state.chartInterval);
   clearInterval(state.autoFinishInterval);
 
+  // Lockdown while reloading
+  startBtn.disabled = true;
+  resetBtn.disabled = true;
+  errorMsgEl.textContent = "Preparing new session...";
+  errorMsgEl.style.color = "var(--primary)";
+
   Object.assign(state, {
     originalText: "",
     typedText: "",
@@ -346,6 +460,11 @@ async function onReset() {
     started: false,
     finished: false,
     accumulatedErrors: 0,
+    sessionId: null,
+    isSubmitting: false,
+    correctionOffset: 0,
+    lastPauseStart: null,
+    isWaitingForResume: false,
   });
 
   inputEl.value = "";
@@ -356,32 +475,48 @@ async function onReset() {
   liveAccEl.textContent = "100%";
   resultSection.classList.add("hidden");
   statsEl.innerHTML = "";
-  errorMsgEl.textContent = "";
 
-  // Fetch new paragraph
   try {
-    const { fetchParagraph } = await import("./api.js");
-    state.originalText = await fetchParagraph();
-  } catch {
-    state.originalText = paragraphEl.dataset.original;
+    // Atomically fetch new paragraph and session ID
+    const [p, s] = await Promise.all([fetchParagraph(), startSession()]);
+    state.originalText = p;
+    state.sessionId = s;
+    
+    paragraphEl.dataset.original = state.originalText;
+    renderParagraph();
+    errorMsgEl.textContent = "Session ready. Click Start Typing.";
+    errorMsgEl.style.color = "var(--success)";
+    
+    // Reset chart
+    chart.data.labels = [];
+    chart.data.datasets[0].data = [];
+    chart.data.datasets[1].data = [];
+    chart.update();
+  } catch (err) {
+    errorMsgEl.textContent = "Connection error. Please try clicking Reset again.";
+    errorMsgEl.style.color = "var(--danger)";
+  } finally {
+    startBtn.disabled = false;
+    resetBtn.disabled = false;
   }
-
-  paragraphEl.dataset.original = state.originalText;
-  renderParagraph();
-
-  // Reset chart
-  chart.data.labels = [];
-  chart.data.datasets[0].data = [];
-  chart.data.datasets[1].data = [];
-  chart.update();
 }
 
 // ── Start button ─────────────────────────────────────────────────────────────
 
-function onStart() {
-  inputEl.disabled = false;
-  inputEl.focus();
-  startBtn.disabled = true;
+async function onStart() {
+  try {
+    errorMsgEl.textContent = "Establishing session...";
+    state.sessionId = await startSession();
+    errorMsgEl.textContent = "Connected. Begin typing to start the analysis timer.";
+    errorMsgEl.style.color = "var(--success)";
+    
+    inputEl.disabled = false;
+    inputEl.focus();
+    startBtn.disabled = true;
+  } catch (err) {
+    errorMsgEl.textContent = "Error: Blocked by server or connection failed.";
+    errorMsgEl.style.color = "var(--danger)";
+  }
 }
 
 // ── Init ─────────────────────────────────────────────────────────────────────
@@ -398,4 +533,9 @@ export function init(originalText) {
   inputEl.addEventListener("keydown", onKeyDown);
   inputEl.addEventListener("keyup", onKeyUp);
   inputEl.addEventListener("input", onInput);
+  
+  // Secure Anti-Cheat Lockdown
+  inputEl.addEventListener("paste", preventPasteAction);
+  inputEl.addEventListener("drop", preventPasteAction);
+  inputEl.addEventListener("contextmenu", preventPasteAction);
 }
