@@ -4,6 +4,23 @@ import { computeFeatures, computeDisplayStats } from "./metrics.js";
 import { predictMood, startSession, fetchParagraph } from "./api.js";
 import { getSuggestions, MOOD_EMOJI, formatTime } from "./utils.js";
 
+// ── Globals ──────────────────────────────────────────────────────────────────
+let chart = null;
+let radarChart = null;
+
+const FEATURE_RANGES = {
+  wpm: [10, 130],
+  wpm_variance: [0, 400],
+  avg_key_hold_time: [50, 400],
+  avg_inter_key_delay: [50, 1000],
+  backspace_rate: [0, 1],
+  error_rate: [0, 1],
+  avg_pause_time: [50, 2000],
+  pause_variability: [0, 1],
+  typing_consistency_score: [0, 1],
+  burstiness_score: [0, 1]
+};
+
 // ── State ────────────────────────────────────────────────────────────────────
 
 const state = {
@@ -13,12 +30,12 @@ const state = {
   endTime: null,
   holdTimes: [],
   keyDownTimes: [],
-  keyDownMap: {},      // key -> timestamp of most recent keydown
+  keyDownMap: {},
   wordTimestamps: [],
   backspaceCount: 0,
   totalKeys: 0,
   timerInterval: null,
-  liveWpms: [],        // one entry per second for chart
+  liveWpms: [],
   liveAccuracies: [],
   chartInterval: null,
   autoFinishInterval: null,
@@ -48,10 +65,18 @@ const confidenceEl  = document.getElementById("confidence");
 const suggestionsEl = document.getElementById("suggestions");
 const statsEl       = document.getElementById("stats-grid");
 const errorMsgEl    = document.getElementById("error-msg");
+// Layout refs
+const topSection    = document.getElementById("top-section");
+const statsSkeleton = document.getElementById("stats-skeleton");
+// UI improvement refs
+const progressFill  = document.getElementById("progress-fill");
+const analyzingEl   = document.getElementById("analyzing-state");
+const resultBodyEl  = document.getElementById("result-body");
+const pillTimer     = document.getElementById("pill-timer");
+const pillWpm       = document.getElementById("pill-wpm");
+const pillAcc       = document.getElementById("pill-acc");
 
 // ── Chart (Chart.js) ─────────────────────────────────────────────────────────
-
-let chart = null;
 
 function initChart() {
   const ctx = document.getElementById("typing-chart").getContext("2d");
@@ -117,7 +142,6 @@ function updateChart() {
   const wordCount = state.typedText.trim().split(/\s+/).filter(Boolean).length;
   const wpm = elapsedMin > 0 ? Math.round(wordCount / elapsedMin) : 0;
 
-  // accuracy — match the true accumulated errors
   const total = state.totalKeys;
   const errors = state.accumulatedErrors;
   const acc = total > 0 ? Math.round((1 - errors / total) * 100) : 100;
@@ -160,23 +184,18 @@ function startTimer() {
     if (!state.startTime) return;
     const elapsed = Date.now() - state.startTime;
     const remaining = Math.max(0, ONE_MINUTE_MS - elapsed);
-    
-    timerEl.textContent = formatTime(remaining) + " left";
-    
-    updateFinishButton();
 
-    // Turn red in last 10 seconds
+    timerEl.textContent = formatTime(remaining) + " left";
+    updateFinishButton();
     timerEl.style.color = remaining <= 10000 ? "var(--danger)" : "";
   }, 500);
 }
 
 function updateFinishButton() {
   if (state.finished || !state.started) return;
-  
-  const now = Date.now();
-  const elapsed = now - state.startTime;
+
+  const elapsed = Date.now() - state.startTime;
   const MIN_REQ_MS = 45000;
-  
   const isTimeMet = elapsed >= MIN_REQ_MS;
   const isContentDone = state.typedText.length >= state.originalText.length;
 
@@ -204,14 +223,11 @@ function checkAutoFinish() {
 
   const totalPossibleTime = Date.now() - state.startTime - state.correctionOffset;
 
-  // Auto-finish on 1 minute
   if (totalPossibleTime >= ONE_MINUTE_MS) {
     console.log("[SECURITY] 1-minute auto-finish triggered.");
     state.autoFinished = true;
-    onFinish(); // This function now clears its own interval immediately
-  }
-  // Auto-finish when full paragraph is typed
-  else if (state.typedText.length >= state.originalText.length && state.originalText.length > 0) {
+    onFinish();
+  } else if (state.typedText.length >= state.originalText.length && state.originalText.length > 0) {
     console.log("[SECURITY] Paragraph completion auto-finish triggered.");
     state.autoFinished = true;
     onFinish();
@@ -222,7 +238,7 @@ function onKeyDown(e) {
   if (state.finished) return;
 
   const realNow = Date.now();
-  
+
   // Virtual Clock Correction
   if (state.isWaitingForResume) {
     const gap = realNow - state.lastPauseStart;
@@ -240,8 +256,13 @@ function onKeyDown(e) {
     startTimer();
     state.chartInterval = setInterval(updateChart, 1000);
     state.autoFinishInterval = setInterval(checkAutoFinish, 500);
-    startBtn.disabled = true; // Lockdown start button once typing begins
-    // Note: finishBtn remains disabled by updateFinishButton until thresholds met
+    startBtn.disabled = true;
+    // Activate top-bar pills
+    pillTimer.classList.remove("idle");
+    pillWpm.classList.remove("idle");
+    pillAcc.classList.remove("idle");
+    liveWpmEl.textContent = "0";
+    liveAccEl.textContent = "100%";
   }
 
   state.totalKeys++;
@@ -264,11 +285,11 @@ function onKeyUp(e) {
 
 function onInput(e) {
   if (state.finished) return;
-  
+
   const newText = inputEl.value;
   const oldText = state.typedText;
 
-  // Track raw errors (even if they backspace and correct later)
+  // Track raw errors (even corrected ones)
   if (newText.length > oldText.length) {
     for (let i = oldText.length; i < newText.length; i++) {
       if (newText[i] !== state.originalText[i]) {
@@ -279,7 +300,7 @@ function onInput(e) {
 
   state.typedText = newText;
 
-  // Track word completions (space after a word)
+  // Track word completions
   const words = state.typedText.split(" ");
   if (words.length > state.wordTimestamps.length) {
     state.wordTimestamps.push(Date.now() - state.correctionOffset);
@@ -287,6 +308,12 @@ function onInput(e) {
 
   updateFinishButton();
   renderParagraph();
+
+  // Update progress bar
+  if (progressFill && state.originalText.length > 0) {
+    const pct = Math.min(100, (state.typedText.length / state.originalText.length) * 100);
+    progressFill.style.width = pct + "%";
+  }
 }
 
 function preventPasteAction(e) {
@@ -301,8 +328,8 @@ function preventPasteAction(e) {
 
 async function onFinish() {
   if (!state.started || state.finished || state.isSubmitting) return;
-  
-  // IMMEDIATELY Kill all intervals to prevent any secondary triggers (race conditions)
+
+  // Kill all intervals immediately to prevent race conditions
   clearInterval(state.timerInterval);
   clearInterval(state.chartInterval);
   clearInterval(state.autoFinishInterval);
@@ -310,12 +337,15 @@ async function onFinish() {
   console.log("[SECURITY] Finalizing session...");
   state.isSubmitting = true;
   const virtualEndTime = Date.now() - state.correctionOffset;
-  
-  // Cache state for current submission attempt
   const currentOriginal = state.originalText;
 
-  errorMsgEl.textContent = "Analyzing patterns...";
-  errorMsgEl.style.color = "var(--primary)";
+  errorMsgEl.textContent = "";
+
+  // Show result card with spinner immediately — before backend call
+  resultSection.style.display = "block";
+  analyzingEl.style.display = "flex";
+  resultBodyEl.style.display = "none";
+  resultBodyEl.classList.remove("visible");
 
   const features = computeFeatures({ ...state, endTime: virtualEndTime });
   const display = computeDisplayStats({ ...state, endTime: virtualEndTime });
@@ -323,46 +353,49 @@ async function onFinish() {
   const metadata = {
     session_id: state.sessionId,
     total_keys: state.totalKeys,
-    text_length: currentOriginal.length
+    text_length: currentOriginal.length,
   };
 
   try {
     const result = await predictMood(features, metadata);
-    
+
     if (!result || result.stored === false) {
-      // Rejection (Low Trust) - NON-BLOCKING
+      // Rejection (Low Trust) — NON-BLOCKING
       console.warn("[SECURITY] Attempt rejected. Continuing session...", result?.warning);
+
+      // Hide result card — session not finished
+      resultSection.style.display = "none";
+      analyzingEl.style.display = "none";
+
       errorMsgEl.textContent = `⚠ ${result?.warning || "Not enough data yet. Continue typing!"}`;
       errorMsgEl.style.color = "var(--danger)";
-      
-      // Trigger Time Freeze - Stop the clock but allow user to keep typing
+
+      // Trigger Time Freeze
       state.lastPauseStart = Date.now();
       state.isWaitingForResume = true;
-      
-      // IMPORTANT: We DO NOT automatically restart the 1-minute timer here.
-      // This prevents the infinite '403 Forbidden' spam loop.
-      // The user can continue typing and click 'Finish' manually.
     } else {
-      // SUCCESS - LOCK UI
+      // SUCCESS — lock UI
       state.finished = true;
       state.endTime = virtualEndTime;
-      
+
       inputEl.disabled = true;
       finishBtn.disabled = true;
-      
+
       console.log("[SECURITY] Session closed successfully.");
       renderStats(features, display);
-      renderResult(result);
+      renderResult(result, features);
       errorMsgEl.textContent = "Analysis complete. Data stored safely.";
       errorMsgEl.style.color = "var(--success)";
     }
   } catch (err) {
-    // 403, 429, 422 errors caught here
     console.error("[SECURITY] Submission failed.", err.message);
-    
+
+    // Hide result card on error
+    resultSection.style.display = "none";
+    analyzingEl.style.display = "none";
+
     if (err.message.includes("403") || err.message.toLowerCase().includes("session")) {
       errorMsgEl.textContent = "⚠ Session lost / Server restarted. Please click RESET.";
-      // Visual cue: Pulsate reset button
       resetBtn.style.transform = "scale(1.1)";
       resetBtn.style.boxShadow = "0 0 15px var(--primary)";
       setTimeout(() => {
@@ -372,15 +405,15 @@ async function onFinish() {
     } else {
       errorMsgEl.textContent = `⚠ ${err.message}. Continue typing and click finish again.`;
     }
-    
+
     errorMsgEl.style.color = "var(--danger)";
-    
+
     // Trigger Time Freeze
     state.lastPauseStart = Date.now();
     state.isWaitingForResume = true;
   } finally {
     state.isSubmitting = false;
-    resetBtn.disabled = false; // Recovery path: Always allow reset
+    resetBtn.disabled = false;
   }
 }
 
@@ -409,10 +442,15 @@ function renderStats(features, display) {
       </div>`
     )
     .join("");
+
+  // Swap skeleton for real data
+  statsSkeleton.style.display = "none";
+  statsEl.style.display = "grid";
+  statsEl.classList.add("visible");
 }
 
-function renderResult(result) {
-  const { mood, confidence, driving_factors } = result;
+function renderResult(result, userFeatures) {
+  const { mood, confidence, driving_factors, overall_means } = result;
   const emoji = MOOD_EMOJI[mood] || "🧠";
   const pct = Math.round(confidence * 100);
 
@@ -429,13 +467,90 @@ function renderResult(result) {
     drivingBlock.innerHTML = "";
   }
 
+  // 1. Update Confidence Bar
+  const confBar = document.getElementById("conf-bar");
+  if (confBar) confBar.style.width = pct + "%";
+
+  // Reveal result body first so Chart.js can calculate dimensions
+  analyzingEl.style.display = "none";
+  resultBodyEl.style.display = "block";
+  resultBodyEl.classList.add("visible");
+
+  // 2. Initialize / Update Radar Chart
+  console.log("[DEBUG] Starting Radar Chart initialization after reveal...");
+  const radarCanvas = document.getElementById("radar-chart");
+  if (!radarCanvas) {
+    console.error("[DEBUG] Error: radar-chart canvas element not found in DOM.");
+  }
+
+  if (overall_means && radarCanvas) {
+    console.log("[DEBUG] overall_means received:", overall_means);
+    const labels = ["WPM", "WPM Var", "Key Hold", "Inter-Key", "Backspace", "Error", "Pause", "Pause Var", "Consistency", "Burstiness"];
+    const featureKeys = ["wpm", "wpm_variance", "avg_key_hold_time", "avg_inter_key_delay", "backspace_rate", "error_rate", "avg_pause_time", "pause_variability", "typing_consistency_score", "burstiness_score"];
+    
+    const normalizedData = featureKeys.map(key => {
+      const val = userFeatures[key];
+      const mean = overall_means[key] || 1;
+      const norm = val / (2 * mean);
+      const clipped = Math.max(0, Math.min(1, norm));
+      console.log(`[DEBUG] Feature: ${key}, Value: ${val}, Mean: ${mean}, Normalized: ${clipped}`);
+      return clipped;
+    });
+
+    try {
+      if (radarChart) {
+        console.log("[DEBUG] Destroying existing radarChart instance.");
+        radarChart.destroy();
+      }
+      
+      const radarCtx = radarCanvas.getContext("2d");
+      radarChart = new Chart(radarCtx, {
+        type: 'radar',
+        data: {
+          labels: labels,
+          datasets: [{
+            label: 'Your Typing Signature',
+            data: normalizedData,
+            fill: true,
+            backgroundColor: 'rgba(110, 231, 183, 0.1)',
+            borderColor: '#6ee7b7',
+            pointBackgroundColor: '#6ee7b7',
+            pointBorderColor: '#fff',
+            pointHoverBackgroundColor: '#fff',
+            pointHoverBorderColor: '#6ee7b7'
+          }]
+        },
+        options: {
+          plugins: { legend: { display: false } },
+          scales: {
+            r: {
+              angleLines: { color: '#1e293b' },
+              grid: { color: '#1e293b' },
+              pointLabels: { color: '#64748b', font: { size: 10 } },
+              ticks: { display: false, stepSize: 0.2 },
+              suggestedMin: 0,
+              suggestedMax: 1
+            }
+          },
+          responsive: true,
+          maintainAspectRatio: false
+        }
+      });
+      console.log("[DEBUG] Radar Chart created successfully.");
+    } catch (e) {
+      console.error("[DEBUG] Failed to create Radar Chart:", e);
+    }
+  } else if (!overall_means) {
+    console.warn("[DEBUG] overall_means missing from response. Skipping radar chart.");
+  }
+
   const suggestions = getSuggestions(mood);
   suggestionsEl.innerHTML = suggestions
     .map((s) => `<li>${s}</li>`)
     .join("");
 
-  resultSection.classList.remove("hidden");
-  resultSection.scrollIntoView({ behavior: "smooth" });
+  // Trigger layout shift: paragraph+typing shrink left, mood panel slides in
+  topSection.classList.add("finished");
 }
 
 // ── Reset ────────────────────────────────────────────────────────────────────
@@ -445,7 +560,6 @@ async function onReset() {
   clearInterval(state.chartInterval);
   clearInterval(state.autoFinishInterval);
 
-  // Lockdown while reloading
   startBtn.disabled = true;
   resetBtn.disabled = true;
   errorMsgEl.textContent = "Preparing new session...";
@@ -480,24 +594,48 @@ async function onReset() {
   inputEl.value = "";
   inputEl.disabled = true;
   finishBtn.disabled = true;
-  timerEl.textContent = "0s";
-  liveWpmEl.textContent = "0";
-  liveAccEl.textContent = "100%";
-  resultSection.classList.add("hidden");
+
+  // Restore idle state
+  timerEl.textContent = "—";
+  timerEl.style.color = "";
+  liveWpmEl.textContent = "—";
+  liveAccEl.textContent = "—";
+  pillTimer.classList.add("idle");
+  pillWpm.classList.add("idle");
+  pillAcc.classList.add("idle");
+
+  // Reset layout shift
+  topSection.classList.remove("finished");
+  resultSection.style.display = "none";
+  analyzingEl.style.display = "none";
+  resultBodyEl.style.display = "none";
+  resultBodyEl.classList.remove("visible");
+
+  const confBar = document.getElementById("conf-bar");
+  if (confBar) confBar.style.width = "0%";
+
+  if (radarChart) {
+    radarChart.destroy();
+    radarChart = null;
+  }
+
+  // Restore skeleton
+  statsSkeleton.style.display = "block";
+  statsEl.style.display = "none";
+  statsEl.classList.remove("visible");
   statsEl.innerHTML = "";
+  if (progressFill) progressFill.style.width = "0%";
 
   try {
-    // Atomically fetch new paragraph and session ID
     const [p, s] = await Promise.all([fetchParagraph(), startSession()]);
     state.originalText = p;
     state.sessionId = s;
-    
+
     paragraphEl.dataset.original = state.originalText;
     renderParagraph();
     errorMsgEl.textContent = "Session ready. Click Start Typing.";
     errorMsgEl.style.color = "var(--success)";
-    
-    // Reset chart
+
     chart.data.labels = [];
     chart.data.datasets[0].data = [];
     chart.data.datasets[1].data = [];
@@ -519,7 +657,7 @@ async function onStart() {
     state.sessionId = await startSession();
     errorMsgEl.textContent = "Connected. Begin typing to start the analysis timer.";
     errorMsgEl.style.color = "var(--success)";
-    
+
     inputEl.disabled = false;
     inputEl.focus();
     startBtn.disabled = true;
@@ -543,7 +681,7 @@ export function init(originalText) {
   inputEl.addEventListener("keydown", onKeyDown);
   inputEl.addEventListener("keyup", onKeyUp);
   inputEl.addEventListener("input", onInput);
-  
+
   // Secure Anti-Cheat Lockdown
   inputEl.addEventListener("paste", preventPasteAction);
   inputEl.addEventListener("drop", preventPasteAction);

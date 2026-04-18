@@ -21,14 +21,11 @@ def load_model():
         model = payload
 
 
-def get_driving_factors(user_features: pd.DataFrame, predicted_mood: str) -> list:
+def get_driving_factors(user_features: pd.DataFrame, predicted_mood: str, overall_means: pd.Series) -> list:
     if not class_means or predicted_mood not in class_means:
         return []
         
     target_profile = class_means[predicted_mood]
-    
-    # Calculate overall dataset means for each feature to establish a baseline
-    overall_means = pd.DataFrame(class_means).mean(axis=1)
     
     factors = []
     for feature in user_features.columns:
@@ -67,10 +64,17 @@ def predict(features: dict) -> dict:
     proba = model.predict_proba(df)[0]
     confidence = float(max(proba))
     
-    driving_factors = get_driving_factors(df, str(mood))
+    # Calculate overall dataset means for each feature to establish a baseline
+    overall_means = pd.DataFrame(class_means).mean(axis=1)
+    
+    # DEBUG LOG
+    print(f"[DEBUG] Calculated overall_means for radar: {overall_means.to_dict()}")
+    
+    driving_factors = get_driving_factors(df, str(mood), overall_means)
     
     return {
         "mood": str(mood), 
         "confidence": round(confidence, 4),
-        "driving_factors": driving_factors
+        "driving_factors": driving_factors,
+        "overall_means": overall_means.to_dict()
     }

@@ -134,6 +134,7 @@ def predict_mood(data: FeaturesInput, request: Request):
         "mood": result["mood"],
         "confidence": result["confidence"],
         "driving_factors": result.get("driving_factors", []),
+        "overall_means": result.get("overall_means"),
         "stored": stored,
         "warning": warning
     }
